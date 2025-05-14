@@ -1,4 +1,6 @@
 //! Platform-specific functionality.
+//! 
+//! 平台特定的功能。
 
 #[cfg(unix)]
 pub mod unix;

@@ -1,5 +1,5 @@
 //! Async I/O and timers.
-//!
+//! 
 //! This crate provides two tools:
 //!
 //! * [`Async`], an adapter for standard networking types (and [many other] types) to use in
@@ -30,10 +30,46 @@
 //! [event ports]: https://illumos.org/man/port_create
 //! [IOCP]: https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-completion-ports
 //! [`polling`]: https://docs.rs/polling
+//! 
+//! 
+//! 异步IO和异步定时器。
+//! 
+//! 此包提供的两个工具：
+//! 
+//! * [`Async`]，标准网络类型适配为异步类型。
+//! * [`Timer`]，一个future或stream，激发定时事件。
 //!
+//! 详细的异步网络类型，参见[`async-net`]。
+//!
+//! [例子]: https://github.com/smol-rs/async-io/tree/master/examples
+//! [`async-net`]: https://docs.rs/async-net
+//!
+//! # 实现
+//!
+//! 首次使用[`Async`] or [`Timer`]时，会孵化一个`async-io`线程，目的是：
+//! - 等待操作系统报告的IO事件，然后
+//! - 唤醒等待IO或定时事件的futures。
+//!
+//! 为了等到下一个IO事件，`async-io`线程在各系统使用IO框架：
+//! - [epoll]：Linux/Android/illumos
+//! - [Kqueue]：macOS/iOS/BSD
+//! - [event ports]：illumos/Solaris
+//! - [IOCP]：Windows
+//!
+//! 可以在任意线程中使用[`block_on()`]函数处理IO事件并唤醒futures。
+//! `async-io`在没有其它能处理IO事件的线程时，只是作为后备机制。
+//!
+//! [epoll]: https://en.wikipedia.org/wiki/Epoll
+//! [kqueue]: https://en.wikipedia.org/wiki/Kqueue
+//! [event ports]: https://illumos.org/man/port_create
+//! [IOCP]: https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-completion-ports
+//! [`polling`]: https://docs.rs/polling
+//! 
 //! # Examples
 //!
 //! Connect to `example.com:80`, or time out after 10 seconds.
+//! 
+//! 连接到`example.com:80`，或10秒超时。
 //!
 //! ```
 //! use async_io::{Async, Timer};
@@ -108,10 +144,21 @@ pub use reactor::{Readable, ReadableOwned, Writable, WritableOwned};
 /// dependent on the current platform; for instance, on Windows, the maximum precision is
 /// about 16 milliseconds. Because of this limit, the timer may sleep for longer than the
 /// requested duration. It will never sleep for less.
+/// 
+/// 可以激发定时事件的future或stream。
+/// - 作为future：发射时输出单个[`Instant`]。
+/// - 作为stream：周期性的输出[`Instant`]。
+/// 
+/// # 精度
+/// - 取决于执行时所在的平台。
+/// - Windows：16毫秒
+/// - Linux：?
 ///
 /// # Examples
 ///
 /// Sleep for 1 second:
+/// 
+/// 休眠1秒：
 ///
 /// ```
 /// use async_io::Timer;
@@ -143,6 +190,10 @@ pub struct Timer {
     /// This timer's ID and last waker that polled it.
     ///
     /// When this field is set to `None`, this timer is not registered in the reactor.
+    /// 
+    /// 定时器ID和最后一次轮询时登记的唤醒器。
+    /// 
+    /// 设为None时，此定时器不会注册到发生器。
     id_and_waker: Option<(usize, Waker)>,
 
     /// The next instant at which this timer fires.
@@ -150,18 +201,26 @@ pub struct Timer {
     /// If this timer is a blank timer, this value is None. If the timer
     /// must be set, this value contains the next instant at which the
     /// timer must fire.
+    /// 
+    /// 定时器下一次激发时间。
     when: Option<Instant>,
 
     /// The period.
+    /// 
+    /// 激发周期。(默认)设为Duration::MAX表示单发。
     period: Duration,
 }
 
 impl Timer {
     /// Creates a timer that will never fire.
+    /// 
+    /// 创建一个空壳定时器，永不会激发。
     ///
-    /// # Examples
+    /// # Examples，例子。
     ///
     /// This function may also be useful for creating a function with an optional timeout.
+    /// 
+    /// 此函数通常用于执行一个带超时功能的函数。配合`Future::or()`。
     ///
     /// ```
     /// # futures_lite::future::block_on(async {
@@ -198,6 +257,8 @@ impl Timer {
     }
 
     /// Creates a timer that emits an event once after the given duration of time.
+    /// 
+    /// 单发定时器，指定的间隔后触发。
     ///
     /// # Examples
     ///
@@ -216,6 +277,8 @@ impl Timer {
     }
 
     /// Creates a timer that emits an event once at the given time instant.
+    /// 
+    /// 单发定时器，指定的时刻发。
     ///
     /// # Examples
     ///
@@ -234,6 +297,8 @@ impl Timer {
     }
 
     /// Creates a timer that emits events periodically.
+    /// 
+    /// 周期定时器，以固定间隔触发。
     ///
     /// # Examples
     ///
@@ -254,6 +319,8 @@ impl Timer {
     }
 
     /// Creates a timer that emits events periodically, starting at `start`.
+    /// 
+    /// 周期定时器，以指定的时间为基点，以固定的周期触发。
     ///
     /// # Examples
     ///
@@ -284,6 +351,10 @@ impl Timer {
     /// [`never()`]: Timer::never()
     /// [`after()`]: Timer::after()
     /// [`at()`]: Timer::at()
+    /// 
+    /// 判定此定时器是否为可激发定时器。
+    /// - [`never()`]，创建不可激发定时器。
+    /// - [`after()`]，[`at()`]，创建可激发定时器。
     ///
     /// # Examples
     ///
@@ -323,6 +394,10 @@ impl Timer {
     /// Note that resetting a timer is different from creating a new timer because
     /// [`set_after()`][`Timer::set_after()`] does not remove the waker associated with the task
     /// that is polling the timer.
+    /// 
+    /// 重设激发时刻为：当前时刻+固定间隔。
+    /// - 如果时间溢出，则激发时刻设为None，并从发生器中清除发射任务。
+    /// - 与重建新定时器区别：重设不会影响关联的唤醒器。
     ///
     /// # Examples
     ///
@@ -351,6 +426,11 @@ impl Timer {
     /// Note that resetting a timer is different from creating a new timer because
     /// [`set_at()`][`Timer::set_at()`] does not remove the waker associated with the task
     /// that is polling the timer.
+    /// 
+    /// 重设激发时刻：
+    /// - 先通过ID将发射任务从发生器中清除。
+    /// - 再更新时刻后，重新注册发射任务。
+    /// - 注册成功后返回新的ID，更新给自己。
     ///
     /// # Examples
     ///
@@ -383,6 +463,11 @@ impl Timer {
     /// Note that resetting a timer is different from creating a new timer because
     /// [`set_interval()`][`Timer::set_interval()`] does not remove the waker associated with the
     /// task that is polling the timer.
+    /// 
+    /// 重设激发周期：
+    /// - 计算新的开始时刻：当前时刻+新周期。
+    /// - 如果计算开始时刻时溢出，则从发生器中清除定时器，并将触发时刻设为None。
+    /// - 否则，更新起始时刻和激发周期。
     ///
     /// # Examples
     ///
@@ -415,6 +500,12 @@ impl Timer {
     /// [`set_interval_at()`][`Timer::set_interval_at()`] does not remove the waker associated with
     /// the task that is polling the timer.
     ///
+    /// 重设激发周期和起始时刻：
+    /// - 先依据ID从发生器中清除发射任务。
+    /// - 更新激发周期和时刻。
+    /// - 重新注册发射任务到发生器。
+    /// - 注册成功后返回新ID更新给自己
+    /// 
     /// # Examples
     ///
     /// ```
@@ -443,6 +534,8 @@ impl Timer {
     }
 
     /// Helper function to clear the current timer.
+    /// 
+    /// 从发生器中清除当前定时器ID对应的发射任务。
     fn clear(&mut self) {
         if let (Some(when), Some((id, _))) = (self.when, self.id_and_waker.as_ref()) {
             // Deregister the timer from the reactor.
@@ -452,6 +545,9 @@ impl Timer {
 }
 
 impl Drop for Timer {
+    /// 实现遗弃
+    /// 
+    /// 定时器销毁时需要将对应的发射任务从发生器移除。
     fn drop(&mut self) {
         if let (Some(when), Some((id, _))) = (self.when, self.id_and_waker.take()) {
             // Deregister the timer from the reactor.
@@ -463,6 +559,7 @@ impl Drop for Timer {
 impl Future for Timer {
     type Output = Instant;
 
+    /// 实现异步轮询(poll)。
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.poll_next(cx) {
             Poll::Ready(Some(when)) => Poll::Ready(when),
@@ -475,6 +572,25 @@ impl Future for Timer {
 impl Stream for Timer {
     type Item = Instant;
 
+    /// 实现异步流轮询.(poll_next)。
+    /// 
+    /// 为什么会被轮询？
+    /// - 收到定时发射任务的唤醒通知了。
+    /// - 编写某集成了定时器的Future时，由用户决定是否调用轮询，不可控。
+    /// 
+    /// 当现在时刻大于定时时刻
+    /// - 说明定时器已经正常到期。
+    /// - 从发生器清理本次发射任务。
+    /// - 如果是周期定时器，插入下次发射任务，并回写自己的唤醒器和ID。
+    /// - 如果是单发定时器，直接将定时时刻归为None。
+    /// - 返回Poll::Ready
+    /// 
+    /// 当现在时刻小于定时时刻
+    /// - 如果id_and_waker为空，说明是首次轮询，注册发射任务到发生器并回填自身。
+    /// - 如果id_and_waker不为空，且唤醒器不对应同一个任务，则清除并重新注册发射任务，回填自身
+    /// - 其它情况，忽略。
+    /// - 返回Poll::Pending。
+    /// 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
@@ -582,10 +698,68 @@ impl Stream for Timer {
 /// Closing the write side of [`Async`] with [`close()`][`futures_lite::AsyncWriteExt::close()`]
 /// simply flushes. If you want to shutdown a TCP or Unix socket, use
 /// [`Shutdown`][`std::net::Shutdown`].
+/// 
+/// 
+/// 将同步IO类型异步化。
 ///
-/// # Examples
+/// 此类型将IO句柄转为非阻塞模式，注册到IO框架[epoll]/[kqueue]/[event ports]/[IOCP]，对外提供异步接口。
+///
+/// [epoll]: https://en.wikipedia.org/wiki/Epoll
+/// [kqueue]: https://en.wikipedia.org/wiki/Kqueue
+/// [event ports]: https://illumos.org/man/port_create
+/// [IOCP]: https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-completion-ports
+///
+/// # 注意事项
+///
+/// [`Async`]是一个低级源语，因此附带一些注意事项。
+///
+/// 有关基于[`Async`]的构建的高级源语，请找[`async-net`]和[`async-process`]。
+///
+/// 最需要注意的是，可变的访问此源语内部的IO源是不安全的。
+/// 类似[`AsyncRead`]和[`AsyncWrite`]之类的特质默认是不实现的，除非保证这些资源不会因读写而失效。
+/// 更多信息，参见[`IoSafe`]。
+///
+/// [`async-net`]: https://github.com/smol-rs/async-net
+/// [`async-process`]: https://github.com/smol-rs/async-process
+/// [`AsyncRead`]: https://docs.rs/futures-io/latest/futures_io/trait.AsyncRead.html
+/// [`AsyncWrite`]: https://docs.rs/futures-io/latest/futures_io/trait.AsyncWrite.html
+///
+/// ### 支持的类型
+///
+/// - 支持所有网络类型，以及一些OS特有文件描述符，比如[Timerfd]和[inotify]
+/// - 不支持文件相关类型，[`File`][`std::fs::File`],[`Stdin`][`std::io::Stdin`], 
+/// [`Stdout`][`std::io::Stdout`], or [`Stderr`][`std::io::Stderr`]
+/// 因为操作系统自身不支持这些操作的异步。
+/// 
+///
+/// [timerfd]: https://github.com/smol-rs/async-io/blob/master/examples/linux-timerfd.rs
+/// [inotify]: https://github.com/smol-rs/async-io/blob/master/examples/linux-inotify.rs
+///
+/// ### 并发IO
+///
+/// 注意：
+/// 如果&T实现了[`AsyncRead`] and [`AsyncWrite`]，则[`&Async<T>`][`Async`]也自动实现。
+/// 意味着，异步任务可以通过对共享引用并发的进行读写。
+///
+/// 例外：
+/// 只有一个任务可以读取时间，只有一个任务可以写入时间。
+/// 可以同时一个人读，一个人写。如果这样做，互相冲突的任务会互相轮流保持清醒，浪费CPU时间。
+/// 此注意事项同样针对[`poll_readable()`][`Async::poll_readable()`]和[`poll_writable()`][`Async::poll_writable()`].
+/// 
+/// 但是：
+/// 多任务可以并发的调用其他方法，如[`readable()`][`Async::readable()`] or [`read_with()`][`Async::read_with()`].
+///
+/// ### 关闭
+///
+/// Closing the write side of [`Async`] with [`close()`][`futures_lite::AsyncWriteExt::close()`]
+/// simply flushes. If you want to shutdown a TCP or Unix socket, use
+/// [`Shutdown`][`std::net::Shutdown`].
+/// 
+/// # Examples，例子
 ///
 /// Connect to a server and echo incoming messages back to the server:
+/// 
+/// 连接到一个服务端，将读取服务端消息同时返回给服务端。
 ///
 /// ```no_run
 /// use async_io::Async;
@@ -594,9 +768,11 @@ impl Stream for Timer {
 ///
 /// # futures_lite::future::block_on(async {
 /// // Connect to a local server.
+/// // 链接到本地的服务端。
 /// let stream = Async::<TcpStream>::connect(([127, 0, 0, 1], 8000)).await?;
 ///
 /// // Echo all messages from the read side of the stream into the write side.
+/// // 将读通道的消息写入写通道。
 /// io::copy(&stream, &stream).await?;
 /// # std::io::Result::Ok(()) });
 /// ```
@@ -604,7 +780,10 @@ impl Stream for Timer {
 /// You can use either predefined async methods or wrap blocking I/O operations in
 /// [`Async::read_with()`], [`Async::read_with_mut()`], [`Async::write_with()`], and
 /// [`Async::write_with_mut()`]:
-///
+/// 
+/// 可以使用预定义的异步方法、或包装阻塞IO的操作，
+/// [`Async::read_with()`], [`Async::read_with_mut()`], [`Async::write_with()`]，[`Async::write_with_mut()`]：
+/// 
 /// ```no_run
 /// use async_io::Async;
 /// use std::net::TcpListener;
@@ -620,9 +799,13 @@ impl Stream for Timer {
 #[derive(Debug)]
 pub struct Async<T> {
     /// A source registered in the reactor.
+    /// 
+    /// 注册到发生器中的事件源，内含被包装的原始对象。
     source: Arc<Source>,
 
     /// The inner I/O handle.
+    /// 
+    /// 被包装的内部IO句柄。
     io: Option<T>,
 }
 
@@ -642,6 +825,13 @@ impl<T: AsFd> Async<T> {
     /// [kqueue]: https://en.wikipedia.org/wiki/Kqueue
     /// [event ports]: https://illumos.org/man/port_create
     /// [IOCP]: https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-completion-ports
+    /// 
+    /// 
+    /// 创建一个异步IO句柄。
+    /// 
+    /// 此方法会将句柄改为非阻塞模式并注册到IO框架。
+    /// 
+    /// 在Unix平台，句柄必须实现AsFd，在Windows平台必须实现AsSocket，以获取句柄。
     ///
     /// # Examples
     ///
@@ -678,9 +868,21 @@ impl<T: AsFd> Async<T> {
     /// The caller should ensure that the handle is set to non-blocking mode or that it is okay if
     /// it is not set. If not set to non-blocking mode, I/O operations may block the current thread
     /// and cause a deadlock in an asynchronous context.
+    /// 
+    /// 创建一个异步IO句柄，传入的是异步非阻塞IO句柄。
+    /// 
+    /// 此方法会把句柄注册到[epoll]/[kqueue]/[event ports]/[IOCP]。
+    /// 
+    /// 在Unix平台，句柄必须实现AsFd，在Windows平台必须实现AsSocket，以获取句柄。
+    /// 
+    /// # 注意事项
+    /// 
+    /// 调用者必须自行确认传入的句柄已设置为非阻塞模式。
+    /// 否则，IO操作会阻塞当前线程在异步上下文中导致死锁。
     pub fn new_nonblocking(io: T) -> io::Result<Async<T>> {
         // SAFETY: It is impossible to drop the I/O source while it is registered through
         // this type.
+        // 安全契约：
         let registration = unsafe { Registration::new(io.as_fd()) };
 
         Ok(Async {
@@ -820,6 +1022,8 @@ impl<T: Into<OwnedSocket>> TryFrom<Async<T>> for OwnedSocket {
 
 impl<T> Async<T> {
     /// Gets a reference to the inner I/O handle.
+    /// 
+    /// 获取对内部IO句柄的引用。
     ///
     /// # Examples
     ///
@@ -841,6 +1045,10 @@ impl<T> Async<T> {
     /// # Safety
     ///
     /// The underlying I/O source must not be dropped using this function.
+    /// 
+    /// 获取一个内部IO句柄的可变引用。
+    /// 
+    /// 底层IO源必须确保不会通过此引用遗弃IO源。
     ///
     /// # Examples
     ///
@@ -860,6 +1068,10 @@ impl<T> Async<T> {
     /// Unwraps the inner I/O handle.
     ///
     /// This method will **not** put the I/O handle back into blocking mode.
+    /// 
+    /// 摄取内部IO句柄的所有权。
+    /// 
+    /// 此方法获取的句柄，一定不要把它变回阻塞模式。
     ///
     /// # Examples
     ///
@@ -884,6 +1096,10 @@ impl<T> Async<T> {
     /// Waits until the I/O handle is readable.
     ///
     /// This method completes when a read operation on this I/O handle wouldn't block.
+    /// 
+    /// 创建一个用于异步等待IO读操作就绪的类型。(普通引用IO句柄)
+    /// 
+    /// 此方法一旦完成，表明对此IO句柄的读操作可以非阻塞的执行。
     ///
     /// # Examples
     ///
@@ -905,6 +1121,10 @@ impl<T> Async<T> {
     /// Waits until the I/O handle is readable.
     ///
     /// This method completes when a read operation on this I/O handle wouldn't block.
+    /// 
+    /// 创建一个用于异步等待IO写操作就绪的类型。(Arc引用IO句柄)
+    /// 
+    /// 此方法一旦完成，表明对此IO句柄的写操作可以非阻塞的执行。
     pub fn readable_owned(self: Arc<Self>) -> ReadableOwned<T> {
         Source::readable_owned(self)
     }
@@ -912,6 +1132,10 @@ impl<T> Async<T> {
     /// Waits until the I/O handle is writable.
     ///
     /// This method completes when a write operation on this I/O handle wouldn't block.
+   /// 
+    /// 创建一个用于异步等待IO写操作就绪的类型。(普通引用IO句柄)
+    /// 
+    /// 此方法一旦完成，表明对此IO句柄的写操作可以非阻塞的执行。
     ///
     /// # Examples
     ///
@@ -934,6 +1158,10 @@ impl<T> Async<T> {
     /// Waits until the I/O handle is writable.
     ///
     /// This method completes when a write operation on this I/O handle wouldn't block.
+    /// 
+    /// 创建一个用于异步等待IO读操作就绪的类型。(普通引用IO句柄)
+    /// 
+    /// 此方法一旦完成，表明对此IO句柄的读操作可以非阻塞的执行。
     pub fn writable_owned(self: Arc<Self>) -> WritableOwned<T> {
         Source::writable_owned(self)
     }
@@ -950,6 +1178,15 @@ impl<T> Async<T> {
     /// will just keep waking each other in turn, thus wasting CPU time.
     ///
     /// Note that the [`AsyncRead`] implementation for [`Async`] also uses this method.
+    /// 
+    /// 轮询IO句柄是否可读。
+    /// 
+    /// 一旦此方法返回了[`Poll::Ready`]，意味着OS已经投递了一个事件，
+    /// 指示自从上次当前任务调用该方法并返回了[`Poll::Pending`]以后，IO句柄已经变的可读了。
+    /// 
+    /// # 注意事项
+    /// 
+    /// 两个不同的任务不能并发的调用此方法，不然互相冲突的任务会一直轮流的互相唤醒，因此浪费CPU时间。
     ///
     /// # Examples
     ///
@@ -1009,6 +1246,14 @@ impl<T> Async<T> {
     /// sends a notification that the I/O handle is readable.
     ///
     /// The closure receives a shared reference to the I/O handle.
+    /// 
+    /// 异步执行一个读操作。操作逻辑包含在了闭包中。
+    /// 
+    /// IO句柄会被注册到发生器，并设为非阻塞模式。
+    /// 此方法提交一个`op`闭包，在loop反复执行，直到成功或返回非[`io::ErrorKind::WouldBlock`]错误。
+    /// loop的每次循环，都会等到OS发送一个IO句柄变为可读的事件通知，才会开始。
+    /// 
+    /// 闭包接受一个IO句柄的**共享引用**作为入参。
     ///
     /// # Examples
     ///
@@ -1046,6 +1291,13 @@ impl<T> Async<T> {
     /// # Safety
     ///
     /// In the closure, the underlying I/O source must not be dropped.
+    /// 
+    /// 异步执行一个读操作。操作逻辑包含在了闭包中。
+    /// 
+    /// 闭包接受一个IO句柄的**可变引用**作为入参。
+    /// 
+    /// # 安全性
+    /// 确保在闭包中不遗弃底层IO资源。
     ///
     /// # Examples
     ///
@@ -1159,15 +1411,18 @@ impl<T> Drop for Async<T> {
     fn drop(&mut self) {
         if self.io.is_some() {
             // Deregister and ignore errors because destructors should not panic.
+            // 从发生器中清除对应的事件源。忽略错误。
             Reactor::get().remove_io(&self.source).ok();
 
             // Drop the I/O handle to close it.
+            // 遗弃IO句柄以关闭它。
             self.io.take();
         }
     }
 }
 
 /// Types whose I/O trait implementations do not drop the underlying I/O source.
+/// 实现IoSafe的IO句柄，确保被遗弃使不会连带遗弃底层IO资源。
 ///
 /// The resource contained inside of the [`Async`] cannot be invalidated. This invalidation can
 /// happen if the inner resource (the [`TcpStream`], [`UnixListener`] or other `T`) is moved out
@@ -1175,6 +1430,11 @@ impl<T> Drop for Async<T> {
 /// the inner type are unsafe, as there is no way to guarantee that the source won't be dropped
 /// and a dangling handle won't be left behind.
 ///
+/// 包在[`Async`]中的资源不能失效。
+/// 失效可能发生在内部资源被移出并在[`Async`]之前被遗弃。
+/// 因此，允许可变访问内部类型使不安全的。
+/// 没有方法能确保资源不被遗弃，只留下悬垂句柄。
+/// 
 /// Unfortunately this extends to implementations of [`Read`] and [`Write`]. Since methods on those
 /// traits take `&mut`, there is no guarantee that the implementor of those traits won't move the
 /// source out while the method is being run.
